@@ -1,0 +1,44 @@
+---
+title: "Voice-Based Prediction of Motor Symptom Changes in Parkinson’s Disease Patients"
+author: "Anna"
+date: "2025-06-04"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Importing necessary libraries
+library(shiny)
+library(readr)
+library(skimr)
+```
+
+
+
+```{r eruptions, echo=FALSE}
+# Loading the data
+data <- read.csv("C:/Users/annas/OneDrive/ADS-503 Final Team Project/parkinsons_telemonitoring.csv/parkinsons_updrs.data", header = TRUE)
+
+# Getting information 
+dim(data)
+summary(data)
+
+```
+
+
+
+```{r}
+
+skim(data)
+
+```
+
+
+```{r}
+
+```
+
+
+
