@@ -1,0 +1,290 @@
+---
+title: "Final Team Project"
+format: html
+editor: visual
+bibliography: references.bib
+csl: apa.csl
+---
+
+```{r}
+# Importing necessary libraries
+library(ggcorrplot)
+library(ggplot2)
+library(GGally)
+library(glmnet)
+library(ranger)
+library(caret)
+library(dplyr)
+library(readr)
+library(knitr)
+library(DT)
+```
+
+## Problem Statement
+
+Can subtle fluctuations in vocal biomarkers be used to predict early signs of motor symptom changes in Parkinson’s Disease patients, enabling timely clinical interventions?
+
+```{r}
+# Loading the data
+data <- read.csv("C:\\Users\\User\\Downloads\\parkinsons_updrs.data", header = TRUE)
+```
+
+```{r}
+names(data)
+dim(data)
+summary(data)
+```
+
+## Data Description
+
+The dataset used in this study is the Parkinson’s Telemonitoring dataset, which includes biomedical voice measurements from 42 individuals with PD. It contains 5,875 rows and multiple features extracted from voice recordings. The primary outcome variable is `motor_UPDRS`—a clinician-rated scale measuring motor function.
+
+## Data Wrangling & Preprocessing
+
+```{r}
+# Convert to factors 
+data$subject <- as.factor(data$`subject.`)
+data$sex <- as.factor(data$sex)
+
+```
+
+```{r}
+# Remove irrelevant columns
+model_data <- data %>%
+  select(-`subject.`, -test_time, -Jitter.DDP)
+```
+
+## Exploratory Data Analysis (EDA)
+
+```{r}
+# Extract numeric columns 
+numeric_vars <- model_data[, sapply(model_data, is.numeric)]
+```
+
+```{r}
+# Compute and plot correlation matrix
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+
+ggcorrplot(cor_matrix,
+           hc.order = TRUE,
+           type = "lower",
+           lab = TRUE,
+           lab_size = 2.5,
+           method = "circle",
+           colors = c("red", "white", "blue"),
+           title = "Correlation Matrix of Numeric Predictors",
+           ggtheme = theme_minimal())
+```
+
+## Correlation Matrix Insights
+
+The correlation matrix visualizes relationships between numeric voice-based biomarkers and the target variable (`motor_UPDRS`). Strong positive correlations (e.g., among shimmer and jitter features) indicate potential multicollinearity, which justifies the use of LASSO regularization. Additionally, `HNR` appears to be negatively correlated with shimmer features, revealing vocal clarity inversely related to motor symptoms.
+
+```{r}
+# Distribution of Target Variable
+ggplot(data, aes(x = motor_UPDRS)) +
+  geom_histogram(bins = 30, fill = "skyblue", color = "white") +
+  labs(title = "Distribution of motor_UPDRS", x = "motor_UPDRS", y = "Count") +
+  theme_minimal()
+```
+
+The histogram shows the distribution of motor_UPDRS, the target variable. Most values fall between 10 and 30, with a peak around 15 to 25. The distribution is slightly right-skewed, indicating that lower motor_UPDRS scores are more common, while fewer patients exhibit high levels of motor impairment.
+
+```{r}
+# Boxplots of Key Predictors vs Target
+ggplot(data, aes(x = sex, y = motor_UPDRS, fill = factor(sex))) +
+  geom_boxplot() +
+  labs(title = "motor_UPDRS by Sex", x = "Sex", y = "motor_UPDRS") +
+  scale_fill_manual(values = c("lightblue", "lightpink")) +
+  theme_minimal()
+```
+
+The boxplot compares motor_UPDRS scores across sexes. Overall, both male (sex = 0) and female (sex = 1) patients show a similar spread of scores, with slightly higher median values observed in males. However, the difference in distribution between sexes is not substantial, suggesting that sex may not be a strong predictor of motor impairment in this dataset.
+
+```{r}
+# Scatterplot: Age vs motor_UPDRS
+ggplot(data, aes(x = age, y = motor_UPDRS)) +
+  geom_point(alpha = 0.5, color = "blue") +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Age vs motor_UPDRS", x = "Age", y = "motor_UPDRS") +
+  theme_minimal()
+```
+
+This scatterplot shows the relationship between patient age and motor_UPDRS scores. While the data points show high variability, the red trend line indicates a slight positive correlation, as age increases, motor impairment tends to increase as well. However, the relationship is weak, suggesting that age alone is not a strong predictor of motor symptoms.
+
+```{r}
+# Pairwise Plots
+ggpairs(data[, c("motor_UPDRS", "age", "Jitter...", "Shimmer", "HNR")])
+```
+
+### Pairwise Relationships Among Key Features
+
+The plot below visualizes pairwise relationships among selected predictors (`age`, `Jitter`, `Shimmer`, `HNR`) and the target variable (`motor_UPDRS`).
+
+-   `motor_UPDRS` shows a moderate positive correlation with `age`, and weak positive correlations with both `Jitter` and `Shimmer`.
+-   `HNR` (Harmonics-to-Noise Ratio) shows a moderate negative correlation with `motor_UPDRS`, meaning that lower voice clarity is associated with greater motor symptoms.
+-   Strong correlations are observed between `Shimmer` and `Jitter`, as well as strong negative correlation between `Shimmer` and `HNR`, indicating potential multicollinearity among voice features.
+
+This plot supports the use of regularization techniques like LASSO to manage correlated predictors.
+
+## Data Splitting
+
+```{r}
+set.seed(42)
+trainIndex <- createDataPartition(model_data$motor_UPDRS, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+trainData <- model_data[trainIndex, ]
+testData  <- model_data[-trainIndex, ]
+
+# Storing test response
+y_test <- testData$motor_UPDRS
+```
+
+## Model Building & Validation
+
+### LASSO Regression
+
+```{r}
+# Prepare data for LASSO
+x_train <- model.matrix(motor_UPDRS ~ ., data = trainData)[, -1]
+y_train <- trainData$motor_UPDRS
+x_test <- model.matrix(motor_UPDRS ~ ., data = testData)[, -1]
+y_test <- testData$motor_UPDRS
+```
+
+```{r}
+# LASSO Model
+lasso_model <- cv.glmnet(x_train, y_train, alpha = 1)
+best_lambda <- lasso_model$lambda.min
+pred_lasso  <- predict(lasso_model, s = best_lambda, newx = x_test)
+lasso_rmse  <- sqrt(mean((pred_lasso - y_test)^2))
+
+best_lambda
+lasso_rmse
+```
+
+## LASSO Regression Results
+
+The LASSO model was trained using 10-fold cross-validation. It selected an optimal lambda (λ) of 0.0045, and achieved a Root Mean Squared Error (RMSE) of 0.8799 on the test data. This suggests the model provides reasonably accurate predictions of motor impairment based on voice biomarkers.
+
+## LASSO with caret
+
+```{r}
+train_control <- trainControl(method = "cv", number = 10)
+lasso_caret <- train(
+  motor_UPDRS ~ .,
+  data = trainData,
+  method = "glmnet",
+  trControl = train_control,
+  tuneLength = 10
+)
+
+pred_lasso_caret <- predict(lasso_caret, newdata = testData)
+lasso_caret_rmse <- RMSE(pred_lasso_caret, y_test)
+
+cat("LASSO (caret) RMSE:", round(lasso_caret_rmse, 2), "\n")
+```
+
+```{r}
+results_df <- data.frame(
+  True = y_test,
+  Predicted = pred_lasso_caret
+)
+
+head(results_df)
+```
+
+The LASSO regression model was trained using the `caret` package with 10-fold cross-validation. The model showed strong predictive performance on the test set, with low prediction error and a close alignment between predicted and actual `motor_UPDRS` scores.
+
+This suggests that the LASSO model was effective in capturing the relationship between voice-based biomarkers and motor impairment severity. The consistency in predictions across a range of impairment levels supports its potential use in early detection and remote monitoring of Parkinson’s symptoms.
+
+```{r}
+library(ggplot2)
+
+ggplot(results_df, aes(x = True, y = Predicted)) +
+  geom_point(alpha = 0.6, color = "skyblue") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black") +
+  labs(title = "LASSO (caret): Predicted vs Actual", x = "True motor_UPDRS", y = "Predicted") +
+  theme_minimal()
+```
+
+### Predicted vs Actual Plot (LASSO - caret)
+
+The scatterplot of predicted versus actual `motor_UPDRS` scores shows a strong linear relationship. Most points are closely aligned with the diagonal reference line, indicating that the model’s predictions are accurate across a wide range of motor impairment levels. The even spread around the line suggests no major bias or systematic error.
+
+## Random Forest Model
+
+```{r}
+library(caret)
+
+```
+
+```{r}
+train_control <- trainControl(method = "cv", number = 3)
+rf_ranger <- train(
+  motor_UPDRS ~ .,
+  data = trainData,
+  method = "ranger",
+  trControl = train_control,
+  tuneLength = 1,
+  importance = "impurity"
+)
+
+```
+
+```{r}
+# Make predictions on test set
+pred_rf_ranger <- predict(rf_ranger, newdata = testData)
+
+# Calculate RMSE
+rf_ranger_rmse <- RMSE(pred_rf_ranger, y_test)
+print(paste("Random Forest RMSE:", round(rf_ranger_rmse, 4)))
+
+# Plot: Predicted vs Actual
+library(ggplot2)
+ggplot(data.frame(True = y_test, Predicted = pred_rf_ranger),
+       aes(x = True, y = Predicted)) +
+  geom_point(color = "green", alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(title = "Random Forest: Predicted vs Actual",
+       x = "True motor_UPDRS", y = "Predicted") +
+  theme_minimal()
+
+```
+
+```{r}
+# Load knitr for kable()
+library(knitr)
+# Combine model performance results into a table
+results_df <- data.frame(
+  Model = c("LASSO (caret)", "Random Forest (ranger)"),
+  RMSE = c(round(lasso_caret_rmse, 4), round(rf_ranger_rmse, 4))
+)
+
+# Clean table for report
+kable(results_df, caption = "Model Comparison: RMSE Results")
+```
+
+```{r}
+ggplot(results_df, aes(x = Model, y = RMSE, fill = Model)) +
+  geom_col() +
+  theme_minimal() +
+  labs(title = "RMSE Comparison: LASSO vs Random Forest", y = "RMSE", x = "Model")
+```
+
+```{r}
+library(tibble)
+# Save Results
+results_df <- tibble(
+  Model = c("LASSO", "Ranger RF"),
+  RMSE  = c(round(lasso_caret_rmse, 4), round(rf_ranger_rmse, 4))
+)
+
+write.csv(results_df, "model_comparison_results.csv", row.names = FALSE)
+saveRDS(lasso_caret, "lasso_model.rds")
+saveRDS(rf_ranger, "rf_model.rds")
+saveRDS(testData, "test_data.rds")
+
+cat("All tasks complete. Models and results exported.\n")
+```
