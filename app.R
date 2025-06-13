@@ -11,91 +11,95 @@ library(readr)
 library(dplyr)
 library(DT)
 library(shinyWidgets)
+library(rmarkdown)
 
-# Load models and data
+# Load trained models and data
 lasso_model <- readRDS("/Users/user/lasso_model.rds")
-rf_model    <- readRDS("/Users/user/rf_model.rds")
+rf_model    <- readRDS("/Users/user/ranger_rf_model.rds")
 svm_model   <- readRDS("/Users/user/svm_model.rds")
 gbm_model   <- readRDS("/Users/user/gbm_model.rds")
 knn_model   <- readRDS("/Users/user/knn_model.rds")
 
 results_df  <- read_csv("/Users/user/model_comparison_results.csv")
 testData    <- readRDS("/Users/user/test_data.rds")
+y_test      <- testData$motor_UPDRS
 
-# Prepare prediction outputs
-y_test <- testData$motor_UPDRS
+# Model predictions
 preds <- list(
-  LASSO = predict(lasso_model, newdata = testData),
-  RF    = predict(rf_model,    newdata = testData),
-  SVM   = predict(svm_model,   newdata = testData),
-  GBM   = predict(gbm_model,   newdata = testData),
-  kNN   = predict(knn_model,   newdata = testData)
+  LASSO       = predict(lasso_model, newdata = testData),
+  `Ranger RF` = predict(rf_model,    newdata = testData),
+  SVM         = predict(svm_model,   newdata = testData),
+  GBM         = predict(gbm_model,   newdata = testData),
+  kNN         = predict(knn_model,   newdata = testData)
 )
 
 # Custom theme
 usd_colors <- bs_theme(
   bootswatch = "flatly",
-  primary = "#002855",    # Navy Blue
-  secondary = "#007FAE",  # Torero Blue
+  primary = "#002855",
+  secondary = "#007FAE",
   base_font = font_google("Roboto")
 )
 
 # UI
 ui <- navbarPage(
   title = div(
-    img(src = "usd-logo-primary-thumb.png", height = "40px", style = "margin-right:10px;"),
-    span("Parkinson's UPDRS Prediction Dashboard", style = "color:#002855; font-weight:bold;")
+    img(src = "usd-logo-primary-thumb.png", height = "40px", 
+        style = "margin-right:10px; background:white; border-radius:4px; padding:4px;"),
+    span("Parkinson's UPDRS Prediction Dashboard", 
+         style = "color:#002855; font-weight:bold; font-size: 22px;")
   ),
   theme = usd_colors,
   
-  # Add custom CSS to override navbar background
-  header = tags$style(HTML("
-    .navbar-default {
-      background-color: white !important;
-      border-color: #e7e7e7 !important;
-    }
-    .navbar-default .navbar-nav > li > a,
-    .navbar-default .navbar-brand {
-      color: #002855 !important;
-    }
-    .navbar-default .navbar-nav > li > a:hover,
-    .navbar-default .navbar-brand:hover {
-      color: #005a9c !important;
-    }
-  ")),
-  
   tabPanel("Overview",
            fluidPage(
-             h2("Welcome to the Parkinson's Prediction Dashboard"),
-             p("This interactive application allows you to explore various machine learning models used to predict motor_UPDRS scores based on vocal biomarkers."),
+             br(),
+             h2("Welcome", style = "color:#002855; font-weight:bold"),
+             p("Explore machine learning models that predict Parkinson's motor symptoms using vocal biomarkers."),
              br(),
              fluidRow(
                column(6, valueBoxOutput("bestModelBox")),
                column(6, valueBoxOutput("lowestRMSEBox"))
              ),
              br(),
-             plotOutput("overviewPlot")
+             selectInput("overviewFilter", "Filter by Model:", choices = c("All", names(preds)), selected = "All"),
+             plotOutput("overviewPlot", height = "300px"),
+             br(),
+             h5("Download full analysis report:"),
+             downloadButton("downloadReport", "Download HTML Report")
            )
   ),
   
   tabPanel("Model Predictions",
-           sidebarLayout(
-             sidebarPanel(
-               selectInput("model", "Select Model:", choices = names(preds)),
-               sliderInput("ageFilter", "Filter by Age:", 
-                           min = min(testData$age), max = max(testData$age),
-                           value = c(min(testData$age), max(testData$age)))
-             ),
-             mainPanel(
-               h4(textOutput("modelTitle")),
-               plotOutput("predPlot"),
-               verbatimTextOutput("rmseText")
+           fluidPage(
+             br(),
+             sidebarLayout(
+               sidebarPanel(
+                 selectInput("model", "Select Model:", choices = names(preds)),
+                 sliderInput("ageFilter", "Filter by Age:",
+                             min = min(testData$age), max = max(testData$age),
+                             value = c(min(testData$age), max(testData$age))
+                 ),
+                 sliderInput("predRange", "Filter by Predicted Value:",
+                             min = floor(min(unlist(preds))), max = ceiling(max(unlist(preds))),
+                             value = c(floor(min(unlist(preds))), ceiling(max(unlist(preds))))
+                 ),
+                 sliderInput("pointAlpha", "Point Transparency:", min = 0.1, max = 1, step = 0.1, value = 0.6),
+                 checkboxInput("showResiduals", "Show Residual Plot", value = FALSE),
+                 downloadButton("downloadModelData", "Download Predictions CSV")
+               ),
+               mainPanel(
+                 h4(textOutput("modelTitle")),
+                 plotOutput("predPlot", height = "400px"),
+                 verbatimTextOutput("rmseText")
+               )
              )
            )
   ),
   
   tabPanel("RMSE Table",
            fluidPage(
+             br(),
              h4("Model Performance Summary"),
              DTOutput("resultsTable")
            )
@@ -103,8 +107,37 @@ ui <- navbarPage(
   
   tabPanel("Feature Explorer",
            fluidPage(
-             selectInput("feature", "Choose Feature:", choices = colnames(testData)[sapply(testData, is.numeric)]),
-             plotOutput("featurePlot")
+             br(),
+             fluidRow(
+               column(4,
+                      selectInput("feature", "Choose Feature:", 
+                                  choices = colnames(testData)[sapply(testData, is.numeric)]),
+                      selectInput("smoother", "Smoothing Method:", 
+                                  choices = c("Linear (lm)" = "lm", "LOESS" = "loess", "None" = "none"), selected = "lm"),
+                      sliderInput("featureAlpha", "Point Transparency:", min = 0.1, max = 1, step = 0.1, value = 0.6),
+                      checkboxInput("jitterPoints", "Apply Jitter", value = FALSE)
+               ),
+               column(8,
+                      plotOutput("featurePlot", height = "400px")
+               )
+             )
+           )
+  ),
+  
+  tabPanel("Project Details",
+           fluidPage(
+             br(),
+             h3("Workflow and Technical Overview", style = "color:#002855; font-weight:bold"),
+             p("This project predicts Parkinson's motor symptom severity (motor_UPDRS) using vocal biomarkers. The pipeline includes:"),
+             tags$ul(
+               tags$li("Data Cleaning: Removed subject IDs, timestamps, and irrelevant jitter features"),
+               tags$li("Feature Selection: Included all relevant numerical voice metrics"),
+               tags$li("Model Training: LASSO, Ranger RF, SVM, GBM, and kNN using 10-fold CV via caret"),
+               tags$li("Model Evaluation: RMSE calculated on 20% test holdout set"),
+               tags$li("Visual Analysis: Predicted vs actual, residuals, feature trends"),
+               tags$li("Deployment: Fully interactive dashboard built in R Shiny")
+             ),
+             p("Technologies: caret, ranger, glmnet, gbm, e1071, kknn, bslib, DT, shinyWidgets, rmarkdown.")
            )
   )
 )
@@ -123,34 +156,48 @@ server <- function(input, output) {
   })
   
   output$overviewPlot <- renderPlot({
-    ggplot(results_df, aes(x = Model, y = RMSE, fill = Model)) +
+    df <- if (input$overviewFilter == "All") results_df else filter(results_df, Model == input$overviewFilter)
+    ggplot(df, aes(x = Model, y = RMSE, fill = Model)) +
       geom_col() +
+      theme_minimal() +
       labs(title = "Model RMSE Comparison", y = "RMSE") +
-      theme_minimal()
+      theme(legend.position = "none")
   })
   
   output$modelTitle <- renderText({
-    paste(input$model, " - Predicted vs Actual")
+    paste(input$model, "- Predicted vs Actual / Residual")
   })
   
   output$predPlot <- renderPlot({
     df <- data.frame(True = y_test, Predicted = as.numeric(preds[[input$model]]), Age = testData$age)
-    df <- df %>% filter(Age >= input$ageFilter[1], Age <= input$ageFilter[2])
+    df <- df %>%
+      filter(Age >= input$ageFilter[1], Age <= input$ageFilter[2]) %>%
+      filter(Predicted >= input$predRange[1], Predicted <= input$predRange[2])
     
     if (nrow(df) == 0) {
-      showNotification("No data in this age range", type = "warning")
+      showNotification("No data in this filter range", type = "warning")
       return(NULL)
     }
     
-    ggplot(df, aes(x = True, y = Predicted)) +
-      geom_point(color = "#007FAE", alpha = 0.6) +
-      geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#002855") +
-      labs(x = "True motor_UPDRS", y = "Predicted", title = paste(input$model, "Predicted vs Actual")) +
-      theme_minimal()
+    if (input$showResiduals) {
+      df$Residual <- df$True - df$Predicted
+      ggplot(df, aes(x = Predicted, y = Residual)) +
+        geom_point(alpha = input$pointAlpha, color = "#D7263D") +
+        geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+        labs(title = paste("Residuals for", input$model), y = "Residual (True - Predicted)", x = "Predicted") +
+        theme_minimal()
+    } else {
+      ggplot(df, aes(x = True, y = Predicted)) +
+        geom_point(alpha = input$pointAlpha, color = "#007FAE") +
+        geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#002855") +
+        labs(x = "True motor_UPDRS", y = "Predicted", title = paste(input$model, "Predicted vs Actual")) +
+        theme_minimal()
+    }
   })
   
   output$rmseText <- renderPrint({
-    rmse <- results_df %>% filter(Model == input$model | Model == paste(input$model, "(caret)")) %>% pull(RMSE)
+    rmse <- results_df %>% filter(Model == input$model) %>% pull(RMSE)
+    if (length(rmse) == 0) return("RMSE: Not available")
     paste("RMSE:", round(rmse, 4))
   })
   
@@ -159,13 +206,48 @@ server <- function(input, output) {
   })
   
   output$featurePlot <- renderPlot({
-    feature <- input$feature
-    ggplot(testData, aes_string(x = feature, y = "motor_UPDRS")) +
-      geom_point(color = "#002855", alpha = 0.6) +
-      geom_smooth(method = "lm", color = "#007FAE") +
-      labs(title = paste("motor_UPDRS vs", feature), y = "motor_UPDRS") +
-      theme_minimal()
+    p <- ggplot(testData, aes_string(x = input$feature, y = "motor_UPDRS"))
+    
+    if (input$jitterPoints) {
+      p <- p + geom_jitter(alpha = input$featureAlpha, color = "#002855", width = 0.3, height = 0.3)
+    } else {
+      p <- p + geom_point(alpha = input$featureAlpha, color = "#002855")
+    }
+    
+    if (input$smoother != "none") {
+      p <- p + geom_smooth(method = input$smoother, color = "#007FAE", se = TRUE)
+    }
+    
+    p + theme_minimal() +
+      labs(title = paste("motor_UPDRS vs", input$feature), x = input$feature, y = "motor_UPDRS")
   })
+  
+  output$downloadModelData <- downloadHandler(
+    filename = function() {
+      paste0("predictions_", gsub(" ", "_", tolower(input$model)), ".csv")
+    },
+    content = function(file) {
+      df <- data.frame(True = y_test, Predicted = preds[[input$model]])
+      write.csv(df, file, row.names = FALSE)
+    }
+  )
+  
+  output$downloadReport <- downloadHandler(
+    filename = function() {
+      "Parkinsons_Model_Report.html"
+    },
+    content = function(file) {
+      rmarkdown::render("parkinsons_report.Rmd",
+                        params = list(
+                          results_df = results_df,
+                          test_data = testData,
+                          predictions = preds
+                        ),
+                        output_file = file,
+                        envir = new.env(parent = globalenv())
+      )
+    }
+  )
 }
 
 # Run app
