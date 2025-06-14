@@ -3,7 +3,6 @@
 # Team: Arjun Venkatesh, Vinh Dao, Anahit Shekikyan
 # -----------------------------------------------
 
-# Load Required Libraries
 suppressPackageStartupMessages({
   library(tidyverse)
   library(caret)
@@ -56,78 +55,61 @@ y_test    <- testData$motor_UPDRS
 train_control <- trainControl(method = "cv", number = 10, allowParallel = TRUE)
 
 # -------------------------
-# Train Models
+# Train Models + Track Runtime
 # -------------------------
 
 results <- list()
 predictions <- list()
+run_times <- list()
 
 # LASSO
+start_time <- Sys.time()
 log_message("Training LASSO...")
-lasso_model <- train(
-  motor_UPDRS ~ ., data = trainData,
-  method = "glmnet",
-  trControl = train_control,
-  tuneLength = 10
-)
+lasso_model <- train(motor_UPDRS ~ ., data = trainData, method = "glmnet", trControl = train_control, tuneLength = 10)
+run_times[["LASSO"]] <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
 pred_lasso <- predict(lasso_model, newdata = testData)
 rmse_lasso <- RMSE(pred_lasso, y_test)
 results[["LASSO"]] <- list(model = lasso_model, rmse = rmse_lasso, preds = pred_lasso)
 predictions[["LASSO"]] <- pred_lasso
 
 # Random Forest
+start_time <- Sys.time()
 log_message("Training Ranger RF...")
-rf_model <- train(
-  motor_UPDRS ~ ., data = trainData,
-  method = "ranger",
-  trControl = train_control,
-  tuneGrid = expand.grid(
-    mtry = c(2, 5, 10),
-    splitrule = "variance",
-    min.node.size = 5
-  ),
-  num.trees = 100
-)
+rf_model <- train(motor_UPDRS ~ ., data = trainData, method = "ranger",
+                  trControl = train_control,
+                  tuneGrid = expand.grid(mtry = c(2, 5, 10), splitrule = "variance", min.node.size = 5),
+                  num.trees = 100)
+run_times[["Ranger RF"]] <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
 pred_rf <- predict(rf_model, newdata = testData)
 rmse_rf <- RMSE(pred_rf, y_test)
 results[["Ranger RF"]] <- list(model = rf_model, rmse = rmse_rf, preds = pred_rf)
 predictions[["Ranger RF"]] <- pred_rf
 
 # SVM
+start_time <- Sys.time()
 log_message("Training SVM...")
-svm_model <- train(
-  motor_UPDRS ~ ., data = trainData,
-  method = "svmRadial",
-  trControl = train_control,
-  tuneLength = 5
-)
+svm_model <- train(motor_UPDRS ~ ., data = trainData, method = "svmRadial", trControl = train_control, tuneLength = 5)
+run_times[["SVM"]] <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
 pred_svm <- predict(svm_model, newdata = testData)
 rmse_svm <- RMSE(pred_svm, y_test)
 results[["SVM"]] <- list(model = svm_model, rmse = rmse_svm, preds = pred_svm)
 predictions[["SVM"]] <- pred_svm
 
 # GBM
+start_time <- Sys.time()
 log_message("Training GBM...")
-gbm_model <- train(
-  motor_UPDRS ~ ., data = trainData,
-  method = "gbm",
-  trControl = train_control,
-  tuneLength = 5,
-  verbose = FALSE
-)
+gbm_model <- train(motor_UPDRS ~ ., data = trainData, method = "gbm", trControl = train_control, tuneLength = 5, verbose = FALSE)
+run_times[["GBM"]] <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
 pred_gbm <- predict(gbm_model, newdata = testData)
 rmse_gbm <- RMSE(pred_gbm, y_test)
 results[["GBM"]] <- list(model = gbm_model, rmse = rmse_gbm, preds = pred_gbm)
 predictions[["GBM"]] <- pred_gbm
 
 # kNN
+start_time <- Sys.time()
 log_message("Training kNN...")
-knn_model <- train(
-  motor_UPDRS ~ ., data = trainData,
-  method = "kknn",
-  trControl = train_control,
-  tuneLength = 5
-)
+knn_model <- train(motor_UPDRS ~ ., data = trainData, method = "kknn", trControl = train_control, tuneLength = 5)
+run_times[["kNN"]] <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
 pred_knn <- predict(knn_model, newdata = testData)
 rmse_knn <- RMSE(pred_knn, y_test)
 results[["kNN"]] <- list(model = knn_model, rmse = rmse_knn, preds = pred_knn)
@@ -146,85 +128,25 @@ if (length(valid_preds) >= 2) {
   results[["Ensemble"]] <- list(model = "Average", rmse = rmse_ensemble, preds = ensemble_preds)
   predictions[["Ensemble"]] <- ensemble_preds
   log_message(paste0("Ensemble RMSE: ", round(rmse_ensemble, 4)))
-} else {
-  log_message("Not enough valid predictions for ensemble. Skipping ensemble model.")
 }
 
 # -------------------------
-# Diagnostic & Residual Plots
+# Save Results, Predictions, Runtime
 # -------------------------
-
-log_message("Generating diagnostic and residual plots...")
-
-plot_pred_vs_actual <- function(preds, name) {
-  ggplot(data.frame(Actual = y_test, Predicted = preds), aes(x = Actual, y = Predicted)) +
-    geom_point(alpha = 0.5) +
-    geom_abline(color = "red", linetype = "dashed") +
-    ggtitle(paste("Predicted vs Actual -", name)) +
-    theme_minimal()
-}
-
-plot_residuals <- function(preds, name) {
-  residuals <- y_test - preds
-  ggplot(data.frame(Residuals = residuals, Predicted = preds), aes(x = Predicted, y = Residuals)) +
-    geom_point(alpha = 0.5) +
-    geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
-    ggtitle(paste("Residual Plot -", name)) +
-    theme_minimal()
-}
-
-pdf("model_diagnostics.pdf", width = 8, height = 12)
-for (name in names(predictions)) {
-  p1 <- plot_pred_vs_actual(predictions[[name]], name)
-  p2 <- plot_residuals(predictions[[name]], name)
-  grid.arrange(p1, p2, ncol = 1)
-}
-dev.off()
-
-# -------------------------
-# Feature Importance Plots
-# -------------------------
-
-log_message("Extracting and plotting feature importance...")
-
-importance_plots <- list()
-for (model_name in c("Ranger RF", "GBM")) {
-  model_obj <- results[[model_name]]$model
-  if ("varImp" %in% methods(class = class(model_obj))) {
-    vi <- varImp(model_obj)
-    df <- as.data.frame(vi$importance)
-    df$Feature <- rownames(df)
-    df <- df %>% arrange(desc(Overall)) %>% slice(1:10)
-    
-    p <- ggplot(df, aes(x = reorder(Feature, Overall), y = Overall)) +
-      geom_bar(stat = "identity") +
-      coord_flip() +
-      ggtitle(paste("Top 10 Important Features -", model_name)) +
-      theme_minimal()
-    
-    importance_plots[[model_name]] <- p
-  }
-}
-
-if (length(importance_plots) > 0) {
-  pdf("feature_importance_plots.pdf", width = 8, height = 6)
-  for (p in importance_plots) print(p)
-  dev.off()
-}
-
-# -------------------------
-# Save Results & Predictions
-# -------------------------
-
-log_message("Saving results, predictions, and model objects...")
 
 results_df <- tibble(
   Model = names(results),
   RMSE  = sapply(results, function(x) x$rmse)
 )
 write.csv(results_df, "model_comparison_results.csv", row.names = FALSE)
-saveRDS(testData, "test_data.rds")
 
+runtime_df <- tibble(
+  Model = names(run_times),
+  Runtime_Seconds = unlist(run_times)
+)
+write.csv(runtime_df, "model_runtimes.csv", row.names = FALSE)
+
+saveRDS(testData, "test_data.rds")
 all_preds <- data.frame(ID = seq_along(y_test), Actual = y_test)
 for (name in names(predictions)) {
   all_preds[[name]] <- predictions[[name]]
@@ -237,10 +159,6 @@ for (model_name in names(results)) {
     saveRDS(model_object, paste0(tolower(gsub(" ", "_", model_name)), "_model.rds"))
   }
 }
-
-# -------------------------
-# Shutdown Parallel
-# -------------------------
 
 stopCluster(cl)
 log_message("All tasks complete. Models trained, evaluated, and saved.")
