@@ -21,6 +21,7 @@ gbm_model   <- readRDS("/Users/user/gbm_model.rds")
 knn_model   <- readRDS("/Users/user/knn_model.rds")
 
 results_df  <- read_csv("/Users/user/model_comparison_results.csv")
+runtime_data <- read_csv("/Users/user/model_runtimes.csv")
 testData    <- readRDS("/Users/user/test_data.rds")
 y_test      <- testData$motor_UPDRS
 
@@ -124,6 +125,16 @@ ui <- navbarPage(
            )
   ),
   
+  tabPanel("Run Time",
+           fluidPage(
+             br(),
+             h4("Model Training Duration"),
+             DTOutput("runtimeTable"),
+             br(),
+             plotOutput("runtimePlot", height = "300px")
+           )
+  ),
+  
   tabPanel("Project Details",
            fluidPage(
              br(),
@@ -220,6 +231,18 @@ server <- function(input, output) {
     
     p + theme_minimal() +
       labs(title = paste("motor_UPDRS vs", input$feature), x = input$feature, y = "motor_UPDRS")
+  })
+  
+  output$runtimeTable <- renderDT({
+    datatable(runtime_data, options = list(pageLength = 5), rownames = FALSE)
+  })
+  
+  output$runtimePlot <- renderPlot({
+    ggplot(runtime_data, aes(x = reorder(Model, Runtime_Seconds), y = Runtime_Seconds, fill = Model)) +
+      geom_bar(stat = "identity") +
+      labs(title = "Training Time by Model", y = "Runtime (seconds)", x = "Model") +
+      theme_minimal() +
+      theme(legend.position = "none")
   })
   
   output$downloadModelData <- downloadHandler(
